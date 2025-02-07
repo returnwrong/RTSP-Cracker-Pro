@@ -35,6 +35,7 @@ class RTSPCracker:
         self.config = config
         self.socket = None
         self.should_stop = False
+        self.is_stopped = False  # 添加停止状态标志
 
     def connect(self) -> None:
         """建立socket连接"""
@@ -199,8 +200,9 @@ class RTSPCracker:
         return found_uris
 
     def stop(self):
-        """设置停止标志"""
+        """停止破解"""
         self.should_stop = True
+        self.is_stopped = True
         if self.socket:
             try:
                 self.socket.close()
@@ -210,15 +212,17 @@ class RTSPCracker:
     def brute_force(self) -> tuple:
         """执行暴力破解"""
         self.should_stop = False
+        self.is_stopped = False
         try:
+            if self.should_stop:
+                return False, {}
+
             self.connect()
             found_uris = self.uri_bruteforce()
             
-            if found_uris:
-                print(f"[+] 使用发现的URI路径: {self.config.server_path}")
-            else:
-                print(f"[*] 使用默认路径: {self.config.server_path}")
-            
+            if self.should_stop:
+                return False, {}
+
             print(f"[+] 开始使用 {self.config.brute_force_method} 方式进行暴力破解...")
             
             with open(self.config.username_file, "r") as usernames:
@@ -360,7 +364,7 @@ class RTSPCrackerGUI:
         
         # 标记是否正在运行
         self.is_running = False
-        self.stop_event = threading.Event()  # 添加停止事件标志
+        self.stop_flag = threading.Event()  # 添加停止事件
         self.active_threads = []
         self.thread_lock = threading.Lock()
         self.crack_results = []
@@ -675,9 +679,9 @@ class RTSPCrackerGUI:
     def crack_single_target(self, ip):
         """对单个目标进行破解"""
         try:
-            if not self.is_running:
+            if not self.is_running or self.stop_flag.is_set():
                 return
-            
+
             config = RTSPConfig()
             config.server_ip = ip
             config.server_port = self.config.server_port
@@ -685,30 +689,33 @@ class RTSPCrackerGUI:
             config.username_file = self.config.username_file
             config.password_file = self.config.password_file
             config.brute_force_method = self.config.brute_force_method
-            
+
             cracker = RTSPCracker(config)
             with self.thread_lock:
                 self.crackers[threading.current_thread()] = cracker
+
             print(f"[*] 开始破解目标: {ip}")
-            
-            # 获取破解结果
-            success, result = cracker.brute_force()
-            if success and self.is_running:  # 只在运行状态下添加结果
-                with self.thread_lock:
-                    self.add_crack_result(
-                        ip=ip,
-                        port=config.server_port,
-                        username=result['username'],
-                        password=result['password'],
-                        uri=result.get('uri', '')
-                    )
-                    print(f"[+] 成功添加破解结果: {ip}")
-            
-            if self.is_running:
+
+            while not self.stop_flag.is_set():
+                success, result = cracker.brute_force()
+                if success:
+                    with self.thread_lock:
+                        self.add_crack_result(
+                            ip=ip,
+                            port=config.server_port,
+                            username=result['username'],
+                            password=result['password'],
+                            uri=result.get('uri', '')
+                        )
+                    break
+                if cracker.is_stopped or self.stop_flag.is_set():
+                    break
+
+            if self.is_running and not self.stop_flag.is_set():
                 print(f"[*] 完成目标: {ip}")
-            
+
         except Exception as e:
-            if self.is_running:
+            if self.is_running and not self.stop_flag.is_set():
                 print(f"[-] 破解 {ip} 时发生错误: {str(e)}")
         finally:
             with self.thread_lock:
@@ -766,10 +773,11 @@ class RTSPCrackerGUI:
         """停止破解"""
         if not self.is_running:
             return
-        
+
         print("[*] 正在停止所有任务...")
         self.is_running = False
-        
+        self.stop_flag.set()  # 设置停止标志
+
         # 停止所有正在运行的破解器
         with self.thread_lock:
             for cracker in self.crackers.values():
@@ -777,20 +785,29 @@ class RTSPCrackerGUI:
                     cracker.stop()
                 except:
                     pass
-        
+
         # 等待所有线程完成
-        try:
+        for thread in self.active_threads.copy():
+            try:
+                thread.join(timeout=1)  # 给每个线程1秒钟时间结束
+            except:
+                pass
+
+        # 强制终止未能正常结束的线程
+        with self.thread_lock:
             for thread in self.active_threads.copy():
                 if thread.is_alive():
-                    thread.join(timeout=0.5)
-        except:
-            pass
-        
+                    try:
+                        thread._stop()  # 强制终止线程
+                    except:
+                        pass
+
         # 清理资源
         with self.thread_lock:
             self.crackers.clear()
             self.active_threads.clear()
-        
+
+        self.stop_flag.clear()  # 重置停止标志
         print("[+] 所有任务已停止")
         self.start_button.configure(state=tk.NORMAL)
         self.stop_button.configure(state=tk.DISABLED)
