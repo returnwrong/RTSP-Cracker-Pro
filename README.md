@@ -4,7 +4,7 @@
 
 RTSP Cracker Pro 是一个用于RTSP设备安全测试的现代化图形工具。告别命令行的繁琐操作，让安全测试变得简单优雅。无论你是安全研究人员、网络工程师，还是安全爱好者，这都将是你的得力助手。
 
-![RTSP Cracker Pro](screenshot.jpg)
+![RTSP Cracker Pro](screenshot.jp)
 
 ## ✨ 为什么选择 RTSP Cracker Pro？
 
