@@ -1,6 +1,10 @@
-damin
-asdzxc
-vvmvmv
-asdas
-sdddddd
 admin
+root
+administrator
+system
+supervisor
+user
+guest
+camera
+rtsp
+hikvision
