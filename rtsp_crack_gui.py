@@ -696,20 +696,18 @@ class RTSPCrackerGUI:
 
             print(f"[*] 开始破解目标: {ip}")
 
-            while not self.stop_flag.is_set():
-                success, result = cracker.brute_force()
-                if success:
-                    with self.thread_lock:
-                        self.add_crack_result(
-                            ip=ip,
-                            port=config.server_port,
-                            username=result['username'],
-                            password=result['password'],
-                            uri=result.get('uri', '')
-                        )
-                    break
-                if cracker.is_stopped or self.stop_flag.is_set():
-                    break
+            # 移除while循环，直接调用一次brute_force
+            success, result = cracker.brute_force()
+            if success and self.is_running:
+                with self.thread_lock:
+                    self.add_crack_result(
+                        ip=ip,
+                        port=config.server_port,
+                        username=result['username'],
+                        password=result['password'],
+                        uri=result.get('uri', '')
+                    )
+                print(f"[+] 成功破解目标: {ip}")
 
             if self.is_running and not self.stop_flag.is_set():
                 print(f"[*] 完成目标: {ip}")
