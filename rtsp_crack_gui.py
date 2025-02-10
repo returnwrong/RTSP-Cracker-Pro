@@ -24,6 +24,7 @@ class RTSPConfig:
     password_file: str = ""
     uri_file: str = ""
     brute_force_method: str = 'Digest'
+    timeout: float = 3  # 添加超时设置
 
     @property
     def base_url(self) -> str:
@@ -31,17 +32,23 @@ class RTSPConfig:
 
 class RTSPCracker:
     """RTSP破解器类"""
-    def __init__(self, config: RTSPConfig):
+    def __init__(self, config: RTSPConfig, progress_callback=None):
         self.config = config
         self.socket = None
         self.should_stop = False
-        self.is_stopped = False  # 添加停止状态标志
+        self.is_stopped = False
+        self.progress_callback = progress_callback
+        self.timeout = config.timeout  # 将通过config传入
 
     def connect(self) -> None:
         """建立socket连接"""
         try:
             self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.socket.settimeout(self.timeout)  # 设置超时
             self.socket.connect((self.config.server_ip, self.config.server_port))
+        except socket.timeout:
+            print(f"[-] 连接超时: {self.config.server_ip}")
+            raise
         except socket.error as e:
             print(f"[-] 连接失败: {str(e)}")
             raise
@@ -264,6 +271,9 @@ class RTSPCracker:
                                             "password": password,
                                             "uri": self.config.server_path
                                         }
+                                
+                                if self.progress_callback:
+                                    self.progress_callback()
                                         
                             except Exception as e:
                                 if self.should_stop:
@@ -372,6 +382,11 @@ class RTSPCrackerGUI:
         # 添加线程控制
         self.max_threads = 5  # 默认最大线程数
         self.crackers = {}  # 添加字典来存储每个线程的cracker实例
+        
+        # 添加进度统计
+        self.total_attempts = 0
+        self.current_attempts = 0
+        self.progress_lock = threading.Lock()
 
     def create_gui(self):
         """创建现代化图形界面"""
@@ -484,7 +499,7 @@ class RTSPCrackerGUI:
         self.port_entry.pack(side=tk.LEFT, padx=5)
         self.port_entry.insert(0, "554")
 
-        # 线程数配置
+        # 在线程数设置旁边添加超时设置
         thread_frame = tk.Frame(settings_frame, bg=ModernStyle.BG_COLOR)
         thread_frame.pack(side=tk.LEFT, padx=20)
         
@@ -506,6 +521,29 @@ class RTSPCrackerGUI:
         self.thread_spinbox.pack(side=tk.LEFT, padx=5)
         self.thread_spinbox.delete(0, tk.END)
         self.thread_spinbox.insert(0, "5")
+
+        # 添加超时设置
+        timeout_frame = tk.Frame(settings_frame, bg=ModernStyle.BG_COLOR)
+        timeout_frame.pack(side=tk.LEFT, padx=20)
+        
+        tk.Label(
+            timeout_frame,
+            text="连接超时(秒):",
+            bg=ModernStyle.BG_COLOR,
+            fg=ModernStyle.FG_COLOR,
+            font=ModernStyle.MAIN_FONT
+        ).pack(side=tk.LEFT, padx=5)
+        
+        self.timeout_spinbox = tk.Spinbox(
+            timeout_frame,
+            from_=1,
+            to=30,
+            width=5,
+            **ModernStyle.ENTRY_STYLE
+        )
+        self.timeout_spinbox.pack(side=tk.LEFT, padx=5)
+        self.timeout_spinbox.delete(0, tk.END)
+        self.timeout_spinbox.insert(0, "3")
 
         # 字典文件选择区域
         files_frame = self._create_frame(main_container, "字典文件")
@@ -557,6 +595,68 @@ class RTSPCrackerGUI:
         self.export_url_button = ModernButton(control_frame, text="导出RTSP链接",
                                             command=self.export_rtsp_urls)
         self.export_url_button.pack(side=tk.LEFT, padx=5)
+
+        # 添加进度条区域
+        progress_frame = self._create_frame(main_container, "爆破进度")
+        progress_frame.pack(fill=tk.X, pady=(0, 10))
+
+        # 进度信息容器
+        progress_info_frame = tk.Frame(progress_frame, bg=ModernStyle.BG_COLOR)
+        progress_info_frame.pack(fill=tk.X, padx=10, pady=5)
+
+        # 左侧进度标签
+        self.progress_label = tk.Label(
+            progress_info_frame,
+            text="等待开始...",
+            bg=ModernStyle.BG_COLOR,
+            fg=ModernStyle.FG_COLOR,
+            font=ModernStyle.MAIN_FONT
+        )
+        self.progress_label.pack(side=tk.LEFT)
+
+        # 右侧百分比标签
+        self.percentage_label = tk.Label(
+            progress_info_frame,
+            text="0%",
+            bg=ModernStyle.BG_COLOR,
+            fg=ModernStyle.SUCCESS_COLOR,
+            font=ModernStyle.MAIN_FONT
+        )
+        self.percentage_label.pack(side=tk.RIGHT)
+
+        # 进度条容器
+        progress_bar_frame = tk.Frame(progress_frame, bg=ModernStyle.BG_COLOR)
+        progress_bar_frame.pack(fill=tk.X, padx=10, pady=(0, 5))
+
+        # 自定义样式的进度条
+        style = ttk.Style()
+        style.configure(
+            "Custom.Horizontal.TProgressbar",
+            troughcolor=ModernStyle.BG_COLOR,
+            background=ModernStyle.SUCCESS_COLOR,
+            darkcolor=ModernStyle.SUCCESS_COLOR,
+            lightcolor=ModernStyle.SUCCESS_COLOR,
+            bordercolor=ModernStyle.BG_COLOR,
+            thickness=15
+        )
+
+        self.progress_bar = ttk.Progressbar(
+            progress_bar_frame,
+            style="Custom.Horizontal.TProgressbar",
+            mode='determinate',
+            length=300
+        )
+        self.progress_bar.pack(fill=tk.X, pady=(0, 5))
+
+        # 添加详细信息标签
+        self.detail_label = tk.Label(
+            progress_frame,
+            text="",
+            bg=ModernStyle.BG_COLOR,
+            fg=ModernStyle.FG_COLOR,
+            font=("Cascadia Code", 9)
+        )
+        self.detail_label.pack(pady=(0, 5))
 
         # 输出区域
         output_frame = self._create_frame(main_container, "输出日志")
@@ -635,15 +735,33 @@ class RTSPCrackerGUI:
             entry_widget.insert(0, filename)
 
     def clear_output(self):
-        """清除输出区域并重置IP输入"""
+        """清除输出区域并重置状态"""
         self.output_text.delete(1.0, tk.END)
+        
         # 重置IP输入状态
         self.ip_entry.configure(state='normal')
         self.ip_entry.delete(0, tk.END)
         self.ip_entry.insert(0, "233.233.233.233")
         self.ip_count_label.configure(text="")
+        
+        # 重置进度条和标签
+        self.progress_bar['value'] = 0
+        self.progress_label.config(
+            text="等待开始...",
+            fg=ModernStyle.FG_COLOR
+        )
+        self.detail_label.config(text="")
+        self.percentage_label.config(
+            text="0%",
+            fg=ModernStyle.FG_COLOR
+        )
+        
+        # 重置其他状态
         if hasattr(self, 'target_ips'):
-            self.target_ips = []
+            del self.target_ips
+        self.current_attempts = 0
+        self.total_attempts = 0
+        self.crack_results = []
 
     def update_config(self):
         """更新配置"""
@@ -661,6 +779,16 @@ class RTSPCrackerGUI:
             
             self.config.server_port = int(self.port_entry.get())
             self.max_threads = int(self.thread_spinbox.get())
+            
+            # 添加超时设置
+            try:
+                timeout = float(self.timeout_spinbox.get())
+                if timeout < 1 or timeout > 30:
+                    raise ValueError("超时时间必须在1-30秒之间")
+                self.config.timeout = timeout
+            except ValueError as e:
+                print(f"[-] 超时设置错误: {str(e)}")
+                self.config.timeout = 3  # 使用默认值
             
             # 获取文件路径
             uri_path = self.uri_path.get() or os.path.join(os.getcwd(), "uri.txt")
@@ -689,32 +817,41 @@ class RTSPCrackerGUI:
             config.username_file = self.config.username_file
             config.password_file = self.config.password_file
             config.brute_force_method = self.config.brute_force_method
+            config.timeout = self.config.timeout  # 传递超时设置
 
-            cracker = RTSPCracker(config)
+            # 创建破解器实例时传入进度更新回调
+            cracker = RTSPCracker(config, progress_callback=self.update_progress)
+            cracker.timeout = config.timeout  # 设置超时时间
+            
             with self.thread_lock:
                 self.crackers[threading.current_thread()] = cracker
 
             print(f"[*] 开始破解目标: {ip}")
 
-            # 移除while循环，直接调用一次brute_force
-            success, result = cracker.brute_force()
-            if success and self.is_running:
-                with self.thread_lock:
-                    self.add_crack_result(
-                        ip=ip,
-                        port=config.server_port,
-                        username=result['username'],
-                        password=result['password'],
-                        uri=result.get('uri', '')
-                    )
-                print(f"[+] 成功破解目标: {ip}")
+            try:
+                success, result = cracker.brute_force()
+                
+                if success and self.is_running:
+                    with self.thread_lock:
+                        self.add_crack_result(
+                            ip=ip,
+                            port=config.server_port,
+                            username=result['username'],
+                            password=result['password'],
+                            uri=result.get('uri', '')
+                        )
+                    print(f"[+] 成功破解目标: {ip}")
 
-            if self.is_running and not self.stop_flag.is_set():
-                print(f"[*] 完成目标: {ip}")
-
-        except Exception as e:
-            if self.is_running and not self.stop_flag.is_set():
+                if self.is_running and not self.stop_flag.is_set():
+                    print(f"[*] 完成目标: {ip}")
+                    
+            except socket.timeout:
+                print(f"[-] 目标 {ip} 连接超时，跳过")
+                self.update_progress()  # 更新进度
+            except Exception as e:
                 print(f"[-] 破解 {ip} 时发生错误: {str(e)}")
+                self.update_progress()  # 更新进度
+
         finally:
             with self.thread_lock:
                 if threading.current_thread() in self.crackers:
@@ -732,12 +869,38 @@ class RTSPCrackerGUI:
             return
 
         try:
+            # 检查并获取目标IP
+            if hasattr(self, 'target_ips'):
+                # 如果IP输入框不是只读状态，说明是单个IP输入
+                if self.ip_entry.cget('state') != 'readonly':
+                    ip = self.ip_entry.get().strip()
+                    if not ip or ip.startswith("已导入"):
+                        print("[-] 请输入目标IP地址")
+                        return
+                    self.target_ips = [ip]
+            else:
+                ip = self.ip_entry.get().strip()
+                if not ip or ip.startswith("已导入"):
+                    print("[-] 请输入目标IP地址")
+                    return
+                self.target_ips = [ip]
+
             self.update_config()
             
-            # 验证IP列表
-            if not self.target_ips:  # 改为检查target_ips而不是server_ip
-                print("[-] 请输入至少一个目标IP地址")
-                return
+            # 重置所有状态
+            self.current_attempts = 0
+            self.total_attempts = 0
+            self.crack_results = []
+            self.progress_bar['value'] = 0
+            self.progress_label.config(
+                text="准备开始...",
+                fg=ModernStyle.FG_COLOR
+            )
+            self.detail_label.config(text="")
+            self.percentage_label.config(
+                text="0%",
+                fg=ModernStyle.FG_COLOR
+            )
             
             # 验证文件是否存在
             required_files = {
@@ -756,6 +919,7 @@ class RTSPCrackerGUI:
                 return
 
             self.is_running = True
+            self.stop_flag.clear()
             self.start_button.configure(state=tk.DISABLED)
             self.stop_button.configure(state=tk.NORMAL)
 
@@ -774,7 +938,7 @@ class RTSPCrackerGUI:
 
         print("[*] 正在停止所有任务...")
         self.is_running = False
-        self.stop_flag.set()  # 设置停止标志
+        self.stop_flag.set()
 
         # 停止所有正在运行的破解器
         with self.thread_lock:
@@ -787,32 +951,90 @@ class RTSPCrackerGUI:
         # 等待所有线程完成
         for thread in self.active_threads.copy():
             try:
-                thread.join(timeout=1)  # 给每个线程1秒钟时间结束
+                thread.join(timeout=1)
             except:
                 pass
-
-        # 强制终止未能正常结束的线程
-        with self.thread_lock:
-            for thread in self.active_threads.copy():
-                if thread.is_alive():
-                    try:
-                        thread._stop()  # 强制终止线程
-                    except:
-                        pass
 
         # 清理资源
         with self.thread_lock:
             self.crackers.clear()
             self.active_threads.clear()
 
-        self.stop_flag.clear()  # 重置停止标志
+        self.stop_flag.clear()
+        
+        # 更新进度条状态
+        self.progress_label.config(
+            text="爆破已停止",
+            fg=ModernStyle.ERROR_COLOR
+        )
+        self.detail_label.config(
+            text=f"已尝试 {self.current_attempts:,} 次，成功破解 {len(self.crack_results)} 个目标"
+        )
+        
         print("[+] 所有任务已停止")
         self.start_button.configure(state=tk.NORMAL)
         self.stop_button.configure(state=tk.DISABLED)
 
+    def update_progress(self, attempts=1):
+        """更新进度"""
+        try:
+            def _update():
+                with self.progress_lock:
+                    self.current_attempts += attempts
+                    if self.total_attempts > 0:
+                        percentage = min(100, (self.current_attempts / self.total_attempts) * 100)
+                        self.progress_bar['value'] = percentage
+                        
+                        # 更新标签
+                        self.progress_label.config(
+                            text=f"正在爆破中... ({self.current_attempts:,}/{self.total_attempts:,})"
+                        )
+                        self.percentage_label.config(
+                            text=f"{percentage:.1f}%"
+                        )
+                        
+                        # 更新颜色
+                        if percentage < 30:
+                            color = ModernStyle.ERROR_COLOR
+                        elif percentage < 70:
+                            color = "#FFA500"
+                        else:
+                            color = ModernStyle.SUCCESS_COLOR
+                            
+                        self.percentage_label.config(fg=color)
+                        style = ttk.Style()
+                        style.configure(
+                            "Custom.Horizontal.TProgressbar",
+                            background=color
+                        )
+            
+            self.root.after(0, _update)
+        except Exception as e:
+            print(f"[-] 更新进度时发生错误: {str(e)}")
+
     def run_crack(self):
         """运行破解过程"""
         try:
+            # 计算总尝试次数
+            with open(self.config.username_file, 'r') as f:
+                username_count = sum(1 for line in f if line.strip())
+            with open(self.config.password_file, 'r') as f:
+                password_count = sum(1 for line in f if line.strip())
+                
+            self.total_attempts = len(self.target_ips) * username_count * password_count
+            self.current_attempts = 0
+            
+            # 更新进度条初始状态
+            self.progress_bar['value'] = 0
+            self.progress_label.config(
+                text=f"准备开始爆破... (共 {self.total_attempts:,} 次尝试)"
+            )
+            self.detail_label.config(
+                text=f"目标: {len(self.target_ips)} 个 | 用户名: {username_count} 个 | 密码: {password_count} 个"
+            )
+            self.root.update()
+
+            # 使用原有的多线程逻辑
             for ip in self.target_ips:
                 if not self.is_running:
                     break
@@ -838,9 +1060,23 @@ class RTSPCrackerGUI:
             while self.active_threads and self.is_running:
                 self.active_threads = [t for t in self.active_threads if t.is_alive()]
                 time.sleep(0.1)
-            
+
+            # 完成后更新显示
+            if self.is_running:
+                self.progress_label.config(text="爆破完成!")
+                self.detail_label.config(
+                    text=f"成功破解 {len(self.crack_results)} 个目标"
+                )
+            else:
+                self.progress_label.config(text="爆破已停止")
+                self.detail_label.config(
+                    text=f"已尝试 {self.current_attempts:,} 次，成功破解 {len(self.crack_results)} 个目标"
+                )
+
         except Exception as e:
             print(f"[-] 错误: {str(e)}")
+            self.progress_label.config(text="爆破出错!")
+            self.detail_label.config(text=str(e))
         finally:
             self.is_running = False
             self.root.after(100, self._update_buttons)
